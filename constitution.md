@@ -50,9 +50,14 @@ a decision, not made silently.
 ## Testing
 *One block per test runner. A polyglot repo (e.g. a Python API plus a JS/TS frontend) has more than one — list each, because the green bar `/build` must hit is **every** runner passing. `Test root` records how this runner discovers the per-feature suites under `features/*/tests/` — the one-time wiring `/spec` establishes so feature tests are executable without per-feature path hacks (see `/spec` → "Multi-runner repos"). A single-runner project has just one block. Populated by `/spec` on first use.*
 
-- **Runner:** [name, e.g. pytest]
-  **Run:** `[command]`
-  **Test root:** [how this runner finds feature tests — e.g. a `pytest.ini`/`pyproject` `testpaths`, a Vitest `include` glob, an import alias — or note that feature tests live in `features/*/tests/<runner>/`]
+- **Runner:** Vitest (TypeScript, ESM)
+  **Run:** `pnpm test` (`vitest run`)
+  **Test root:** Vitest `include` glob in `vitest.config.ts` discovers
+  `features/**/tests/**/*.test.ts`. Feature suites live in
+  `features/[feature-name]-[number]/tests/`. Tests resolve repo-relative data
+  files from their own location via `fileURLToPath(import.meta.url)` (never an
+  absolute sandbox path). Non-`.test.ts` files in a `tests/` folder (e.g.
+  `csv.ts`) are shared helpers, not suites.
 
 ## Out of scope
 [List what this codebase explicitly does not do. Populated per app.]
@@ -60,7 +65,8 @@ a decision, not made silently.
 ## Decision log
 | Date | Decision | Rationale |
 |------|----------|-----------|
-[populated as significant decisions are made]
+| 2026-06-07 | Test runner = Vitest (TS/ESM); `pnpm test`. | First feature established the toolchain; Vitest fits the planned Next.js + TypeScript stack. |
+| 2026-06-07 | Curated corpus cut: `masterCategory == Apparel`, articleType floor 50, ≥2 types/subCategory, per-type cap 500. | Keeps multiple subCategories each with ≥2 articleTypes so the corruption engine's near-swap always has a target; cap flattens the Tshirts/Shirts head. Drops Dress, Saree, Apparel Set, Socks. |
 
 ## Acknowledged risks
 *Cross-feature accumulation surface. Each adversarial-gate finding the owner marks `acknowledged` gets one row here so the project never silently forgets that it knowingly took on risk. Severity is the unmitigated severity — an acknowledged HIGH stays HIGH. Populated by `/spec` when a finding is acknowledged.*
