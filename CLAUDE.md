@@ -1,6 +1,6 @@
-# [Project Name]
+# Apparel Classifier
 
-[One-line description of what this app is. Replace when this template is copied.]
+A live demo that corrupts real apparel records, recovers the `articleType` with an LLM, and reports accuracy against ground truth.
 
 ## Repo map
 - `declaration.md` — what this project is and why it exists
@@ -27,71 +27,23 @@ Development runs in Claude Code cloud sandboxes attached to this GitHub repo.
 - **Never rewrite published history.** If a commit is already on the remote default branch — for example a merge commit GitHub created when a PR landed — do not `rebase`, `--reset-author`, or force-push over it; branch from it and move forward. A git stop-hook nudge to amend authorship or rebase applies to your own un-pushed local commits, not to anything already on `main`; following it literally against pushed history would rewrite the shared branch.
 
 ## Run, test, deps
-Pick the block that matches your project's stack. Uncomment it and delete the others. The header on each block describes when to use it.
 
-<!--
-### Python service (a backend program or MCP server, typically deployed to Fly.io)
-- Install: `python3.11 -m venv .venv && .venv/bin/pip install -e .`
-  Creates an isolated Python environment in `.venv/` (a hidden folder) and installs this project into it. The `-e` flag means "editable" — code changes take effect without reinstalling.
-- Run locally: `.venv/bin/<script-name>` where `<script-name>` is defined in `pyproject.toml` under `[project.scripts]`.
-- Tests: `.venv/bin/pytest` — pytest is the standard Python testing framework.
-- Package manager / lockfile: `pyproject.toml` describes dependencies. To add one, edit `pyproject.toml` and re-run the install command.
--->
-
-<!--
-### Web frontend (React + Vite + Tailwind + shadcn/ui — the constitution's default frontend stack)
+### Next.js web app (React + Tailwind; API routes hold the Anthropic key, rate limiting, and the corruption/prediction loop)
 - Install: `pnpm install`
   pnpm is a JavaScript package manager (an alternative to npm). Installs everything listed in `package.json`.
-- Run locally: `pnpm dev` — starts the Vite dev server. Open http://localhost:5173 in a browser.
-- Tests: `pnpm test` — runs Vitest (the test runner that pairs with Vite).
-- Package manager / lockfile: `pnpm` with `pnpm-lock.yaml`. To add a dependency: `pnpm add <package-name>`.
--->
-
-<!--
-### Next.js web app (React with built-in routing and server-side rendering)
-- Install: `pnpm install`
 - Run locally: `pnpm dev` — opens http://localhost:3000.
 - Tests: `pnpm test`
 - Package manager / lockfile: `pnpm` with `pnpm-lock.yaml`. To add a dependency: `pnpm add <package-name>`.
--->
-
-<!--
-### iOS or macOS app (Xcode + Swift)
-- Install: open `<ProjectName>.xcodeproj` in Xcode. Swift Package Manager (SwiftPM) resolves dependencies automatically on open. No separate install command.
-- Run locally: in Xcode, press Run (⌘R) to launch in the chosen simulator or device.
-- Tests: in Xcode, press Test (⌘U). Or from the command line:
-  `xcodebuild test -scheme <SchemeName> -destination 'platform=iOS Simulator,name=iPhone 15'`
-- Package manager / lockfile: Swift Package Manager (`Package.resolved` — committed automatically by Xcode).
--->
 
 
 ## Deployment target
-Pick one. Uncomment the matching block and delete the others.
 
-<!--
-### Fly.io (primary — public-facing app or MCP server)
+### Fly.io (primary — public-facing app)
 - App config lives in `fly.toml` at the repo root; one Fly app per repo (app name typically matches the repo).
 - Deploy via GitHub Actions on push to `main`, running `flyctl deploy` on a GitHub-hosted runner (no self-hosted runners). The workflow authenticates with a `FLY_API_TOKEN` GitHub Actions secret.
-- Secrets are injected with `fly secrets set` / `fly secrets import` (see Secrets below), not written as a `.env` on the host.
+- Secrets are injected with `fly secrets set` / `fly secrets import` (see Secrets below), not written as a `.env` on the host. This app needs `ANTHROPIC_API_KEY` for the LLM classification calls.
 - Health checks are declared in `fly.toml` and enforced by Fly during the rolling release.
 - A deploy is "successful" only if a post-deploy health check against the live app passes — `flyctl deploy` returning zero confirms the release was issued, not that the app is serving. The workflow must hit a health endpoint (or rely on Fly's release health checks) and fail the job if it doesn't return healthy within a bounded retry window.
--->
-
-<!--
-### AWS (secondary — public-facing)
-- Account: `070840362692` (user: `eve-hwang`)
-- Region: `us-east-1` (confirm per project)
-- Credentials: named profiles only; never hardcode keys
-- Deploy via GitHub Actions on push to `main`
-- A deploy is "successful" only if a post-deploy health check against the live service passes — CloudFormation/ECS/Lambda success codes confirm provisioning, not reachability. The workflow must hit a health endpoint (ALB target check, function invocation, etc.) and fail the job if it doesn't return healthy within a bounded retry window.
--->
-
-<!--
-### Apple platform (iOS / macOS via the Xcode Claude extension)
-- Specs live in this repo; build runs in Xcode locally
-- No CI deploy path; release is a manual Xcode build and submission
-- "Deploy success" for an Apple build means the archive builds, signs, and uploads cleanly. There is no live-service health check; treat App Store / TestFlight acceptance as the equivalent gate.
--->
 
 ## Secrets
 - Canonical source: the **1Password "Eviebot" vault**, one item per service (item name matches the repo), each secret a custom field named exactly for its env var.
