@@ -66,8 +66,13 @@ cut is auditable and not a one-off hand edit.*
 
 Acceptance criteria:
 - A committed curation step regenerates the subset from `docs/styles.csv`.
-- Running it twice produces **byte-identical** output (deterministic — any
-  per-type capping/selection uses a fixed, seedless or fixed-seed ordering).
+- Running it twice produces **byte-identical** output, and the output is
+  **environment-independent**: it depends only on the source file contents, not
+  on RNG, wall clock, locale/collation, or non-stable key enumeration. The
+  selection rule is fixed and simple — **retained rows keep their source-file
+  order, and each type's cap keeps the first `MAX_ROWS_PER_TYPE` rows encountered
+  in that order.** (No seeded shuffle: a PRNG is reproducible only as far as its
+  implementation is stable across runtimes, which source order is not subject to.)
 - The output the step produces is **byte-identical to the committed
   `docs/apparel-subset.csv`** (the artifact is in sync with the step that makes it).
 
@@ -82,11 +87,18 @@ Acceptance criteria:
   sibling).
 
 ### Edge cases & failure modes
-- **Last column contains commas.** 22 source rows have unquoted commas in
-  `productDisplayName`. Parsing MUST treat `productDisplayName` as the remainder
-  of the line after the first 9 commas (or use a real CSV reader), never as a
-  naive 10-way split that would truncate the name or shift columns. Such rows
-  are valid and may appear in the subset.
+- **Last column contains commas, and the data is not RFC-4180.** 22 source rows
+  have unquoted commas in `productDisplayName`; 3 of them are Apparel (all
+  `Tshirts`). Parsing MUST treat `productDisplayName` as the **remainder of the
+  line after the first 9 commas**, never as a naive 10-way split that would
+  truncate the name or shift columns. Such rows are valid and may appear in the
+  subset, with the name preserved verbatim including the embedded commas.
+  - **Do not use a strict RFC-4180 CSV reader.** Two rows (ids 7491, 7497)
+    contain a bare inch-mark `"` inside the value with no surrounding quotes
+    (e.g. `Nike Women's EM Tempo 3.5" Pink Short`). A quote-aware reader would
+    treat that `"` as an opening quote and mangle or reject the row. The
+    first-9-commas rule (or a reader explicitly configured to disable quote
+    processing) handles these rows correctly; a strict reader does not.
 - **Sparse types / sparse subCategories.** Types below the floor are dropped;
   subCategories left with < 2 qualifying types are dropped entirely (this is the
   mechanism, not an error).
@@ -113,12 +125,19 @@ relabeling, nothing downstream of the corpus.
   filters to `MASTER_CATEGORY`; drops rows missing required fields; counts rows
   per articleType and drops types below `MIN_ROWS_PER_TYPE`; drops subCategories
   left with fewer than `MIN_TYPES_PER_SUBCATEGORY` qualifying types; caps each
-  remaining type at `MAX_ROWS_PER_TYPE` using a fixed deterministic ordering;
-  emits the original header plus the retained rows unchanged.
+  remaining type at `MAX_ROWS_PER_TYPE` **keeping the first rows in source order**;
+  emits the original header plus the retained rows unchanged, in source order.
+  - **Named seam (`@scaffolding`):** a pure function — substance
+    `curate(sourceCsv: string, params: CurationParams): string` — so the
+    transform can be unit-tested on synthetic input independently of the file
+    I/O. `/build` may site/rename this module as long as the unit test's import
+    target and behavior hold (log any change in `build-deviations.md`).
   - **Behavioral properties it must hold:** output is a row-subset of input with
     columns and values untouched (filter/cap only, no mutation); identical input
-    → identical output (determinism); the per-type cap and per-type floor both
-    hold on the output; every emitted subCategory has ≥ 2 articleTypes.
+    → identical output and source-order preserved (determinism); the per-type cap
+    and per-type floor (inclusive at `MIN_ROWS_PER_TYPE`) both hold on the output;
+    every emitted subCategory has ≥ 2 articleTypes; `productDisplayName` values
+    containing commas or bare `"` are preserved verbatim.
 - **Curation CLI** — a committed script, runnable as `pnpm curate`, that reads
   `docs/styles.csv`, applies the curation module, and writes
   `docs/apparel-subset.csv`. It accepts an optional output path argument so the
@@ -163,18 +182,41 @@ reused.
 | S2: every id exists in source, fields match | `subset-invariants.test.ts` → faithful subset | @frozen |
 | S2: no duplicate ids | `subset-invariants.test.ts` → no duplicates | @frozen |
 | S2: required fields non-empty | `subset-invariants.test.ts` → required fields | @frozen |
-| Edge: commas in productDisplayName parsed correctly | `subset-invariants.test.ts` (parser used throughout + faithful-subset match on names) | @frozen |
+| Edge: commas + bare-`"` in productDisplayName preserved verbatim | `curate-unit.test.ts` → comma fixture, bare-quote fixture | @scaffolding |
+| Edge: inclusive floor boundary (49 dropped / 50 kept) | `curate-unit.test.ts` → floor boundary | @scaffolding |
+| Edge: cap truncates to exactly MAX, source order | `curate-unit.test.ts` → cap + order | @scaffolding |
+| Edge: subCategory with < 2 qualifying types dropped | `curate-unit.test.ts` → subcategory drop | @scaffolding |
+| Design seam: pure transform deterministic & source-order | `curate-unit.test.ts` → determinism | @scaffolding |
 | S3: regeneration deterministic (run twice = identical) | `curation-reproducible.test.ts` → determinism | @scaffolding |
 | S3: committed artifact == step output | `curation-reproducible.test.ts` → in-sync | @scaffolding |
-| S4: rationale exists & documents the cut | `rationale.test.ts` | @frozen |
+| S4: rationale exists & documents the cut (all 4 drops named) | `rationale.test.ts` | @frozen |
 
-`@scaffolding` on the reproducibility tests covers only the *named surface* —
-the `pnpm curate` CLI and its optional output-path argument. `/build` may rename
-or restructure the script as long as `pnpm curate [outpath]` still regenerates
-the subset and the determinism + in-sync behaviors hold. The invariant and
+`@scaffolding` marks the two surfaces named ahead of `/build`: the `pnpm curate`
+CLI (+ optional output-path argument) in `curation-reproducible.test.ts`, and the
+pure `curate(sourceCsv, params)` function in `curate-unit.test.ts`. `/build` may
+rename or re-site either as long as the asserted *behavior* holds (logging the
+change in `build-deviations.md`). The `curate-unit` test asserts behavior on a
+synthetic fixture — the edge cases (comma/bare-quote preservation, the
+inclusive floor boundary, the cap, source-order determinism, subCategory drop)
+that the real-data invariant tests cannot reach because no comma row survives the
+cap and no real articleType sits on the 49/50 boundary. The invariant and
 rationale tests assert the deliverable itself and are frozen.
 
 ---
 
 ## Adversarial gate
-*Populated by the clean-context gate after the spec and tests are drafted.*
+
+**Mode:** independent clean-context sub-agent (general-purpose), one pass. It
+verified all four parameters and the expected 7,485-row / 25-type / 4-subCategory
+outcome against the real `docs/styles.csv`, confirmed the drop list and every
+invariant test as sound, and found no scope drift or security issues. Five
+findings surfaced; the owner chose to **fix all five**. No security findings, so
+no re-gate was required.
+
+| # | Severity | Lens | Finding | Disposition |
+|---|----------|------|---------|-------------|
+| 1 | HIGH | Coverage / tests | Comma-in-name edge case is the spec's headline failure mode but no comma row survives the cap into the committed subset, and the faithful-subset test re-parses both sides with the same helper — so a curate-side parser bug goes uncaught. | **Fixed** — added `curate-unit.test.ts` asserting comma + bare-`"` preservation on a synthetic fixture fed directly to the pure transform. |
+| 2 | MEDIUM | Integrity / spec | "Or use a real CSV reader" is a trap: ids 7491/7497 carry a bare inch-mark `"`, which a strict RFC-4180 reader mangles. | **Fixed** — edge-case text now mandates the first-9-commas rule and forbids a quote-aware reader; the bare-`"` case is unit-tested. |
+| 3 | MEDIUM | Coverage / tests | Determinism test (run twice in one env) can't catch environment-dependent ordering, defeating byte-reproducibility. | **Fixed** — spec now pins env-independent source-order retention as the rule; `curate-unit.test.ts` asserts exact source-order output. |
+| 4 | LOW | Coverage / tests | Inclusive floor boundary (49 dropped / 50 kept) unexercisable on real data and untested. | **Fixed** — `curate-unit.test.ts` covers the 49/50 boundary with synthetic types. |
+| 5 | LOW | Integrity / tests | `rationale.test.ts` named only Saree/Dress and `/\b2\b/` matched any stray "2". | **Fixed** — rationale test now requires all four dropped subCategories and the parameter `2` in its articleType-count role. |

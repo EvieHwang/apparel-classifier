@@ -24,17 +24,20 @@ describe("curation rationale doc", () => {
     expect(text).toMatch(/Apparel/);
   });
 
-  it("states the three numeric parameters", () => {
+  it("states the three numeric parameters in their actual roles", () => {
     expect(text).toMatch(/\b50\b/); // min rows per type
-    expect(text).toMatch(/\b2\b/); // min types per subcategory
     expect(text).toMatch(/\b500\b/); // per-type cap
+    // The min-types-per-subCategory = 2 must be explained, not just any stray "2".
+    expect(text).toMatch(/(≥\s*2|>=\s*2|at least 2|two|2)\s+(distinct\s+)?article\s?[Tt]ypes/);
   });
 
-  it("explains which subCategories were dropped and why", () => {
-    // At least the well-populated drops should be called out by name.
-    expect(text).toMatch(/Saree/i);
-    expect(text).toMatch(/Dress/i);
+  it("explains all four dropped subCategories and why", () => {
+    for (const sub of ["Saree", "Dress", "Apparel Set", "Socks"]) {
+      expect(text, `rationale must name dropped subCategory "${sub}"`).toMatch(
+        new RegExp(sub, "i"),
+      );
+    }
     // The reason: no near-swap sibling / too few articleTypes.
-    expect(text.toLowerCase()).toMatch(/near[- ]swap|too few|fewer than|sibling/);
+    expect(text.toLowerCase()).toMatch(/near[- ]swap|too few|fewer than|sibling|only one/);
   });
 });
