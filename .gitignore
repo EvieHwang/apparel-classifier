@@ -32,6 +32,13 @@ node_modules/
 .next/
 out/
 npm-debug.log*
+
+# Cumulative-tally persistence (feature 4) — runtime SQLite state, never committed.
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 yarn-debug.log*
 yarn-error.log*
 

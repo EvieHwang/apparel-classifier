@@ -18,6 +18,8 @@ import { createRunStructured } from "../../../src/anthropic";
 import { loadSubset } from "../../../src/dataset";
 import { RUN_SIZE } from "../../../src/run-config";
 import { runEventStream } from "../../../src/run-stream";
+import { recordRunStream } from "../../../src/record-run";
+import { getCumulativeStore } from "../../../src/cumulative-sqlite";
 import { encodeSseEvent } from "../../../src/sse-encoder";
 import type { Classify } from "../../../src/types";
 
@@ -57,12 +59,17 @@ export async function GET(): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const event of runEventStream({
-          subset,
-          n: RUN_SIZE,
-          seed,
-          classify,
-        })) {
+        // Wrap the run stream in the recorder pass-through: it forwards every SSE
+        // frame UNCHANGED (so the client parses the identical bytes feature 3 emits)
+        // while folding a successfully completed run into the cumulative store. Because
+        // the recorder awaits the commit before its stream completes, this "iterate
+        // then close" loop closes the response only after the write has landed — the
+        // Story 4 no-lost-update guarantee, owned by the tested recorder seam.
+        const events = recordRunStream(
+          runEventStream({ subset, n: RUN_SIZE, seed, classify }),
+          getCumulativeStore(),
+        );
+        for await (const event of events) {
           controller.enqueue(encoder.encode(encodeSseEvent(event)));
         }
       } catch (err) {

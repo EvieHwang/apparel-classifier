@@ -21,7 +21,7 @@ const runOf = (...args: Parameters<typeof entry>[]): RunTally =>
 
 // A single-record run worth 1 correct near-swap: each fold adds total+1, correct+1.
 const oneCorrectNear = (): RunTally =>
-  runOf([{ id: "x", corruptionTag: "near-swap", correct: true }]);
+  runOf({ id: "x", corruptionTag: "near-swap", correct: true });
 
 describe("cumulative store — contract (Story 3)", () => {
   it("a fresh store reads back empty totals", async () => {
