@@ -1,0 +1,81 @@
+// Server route for one classification run (feature 3).
+//
+// This is the ONLY module that reads `ANTHROPIC_API_KEY`, constructs the Anthropic
+// SDK client, and builds the live `classify`. It is a server route (no "use client"
+// directive), so the SDK and the key never reach the browser. By design no test
+// imports it (it pulls in the SDK), exactly as feature 2's `src/anthropic.ts` is
+// validated manually — see key-isolation.test.ts, which forbids the SDK only in
+// *client* components under app/.
+//
+// It loads the curated subset, picks the fixed run size and a fresh random seed, and
+// pipes the run-event stream out as Server-Sent Events. A missing/blank key fails
+// closed with a non-2xx error frame (Story 5) — never a silent hang, never a key in
+// the response.
+import Anthropic from "@anthropic-ai/sdk";
+import { join } from "node:path";
+import { createAnthropicClassifier } from "../../../src/classify";
+import { createRunStructured } from "../../../src/anthropic";
+import { loadSubset } from "../../../src/dataset";
+import { RUN_SIZE } from "../../../src/run-config";
+import { runEventStream } from "../../../src/run-stream";
+import { encodeSseEvent } from "../../../src/sse-encoder";
+import type { Classify } from "../../../src/types";
+
+// SSE needs an unbuffered, dynamic response — never statically cached.
+export const dynamic = "force-dynamic";
+
+const SSE_HEADERS: HeadersInit = {
+  "content-type": "text/event-stream; charset=utf-8",
+  "cache-control": "no-cache, no-transform",
+  connection: "keep-alive",
+};
+
+const SUBSET_PATH = join(process.cwd(), "docs", "apparel-subset.csv");
+
+export async function GET(): Promise<Response> {
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!apiKey) {
+    // Fail closed: clear, non-2xx, no key value anywhere in the payload.
+    return new Response(
+      encodeSseEvent({
+        type: "error",
+        message:
+          "Server is not configured with an ANTHROPIC_API_KEY; cannot run a classification.",
+      }),
+      { status: 500, headers: SSE_HEADERS },
+    );
+  }
+
+  // Live classifier — built here and nowhere else.
+  const client = new Anthropic({ apiKey });
+  const classify: Classify = createAnthropicClassifier(createRunStructured(client));
+
+  const subset = loadSubset(SUBSET_PATH);
+  const seed = Math.floor(Math.random() * 2_147_483_647); // fresh per run, server-side
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const event of runEventStream({
+          subset,
+          n: RUN_SIZE,
+          seed,
+          classify,
+        })) {
+          controller.enqueue(encoder.encode(encodeSseEvent(event)));
+        }
+      } catch (err) {
+        // runEventStream already converts a classify rejection into a terminal
+        // error event; this guards anything else (e.g. a subset/load fault) so the
+        // client always gets a terminal frame rather than a hung connection.
+        const message = err instanceof Error ? err.message : String(err);
+        controller.enqueue(encoder.encode(encodeSseEvent({ type: "error", message })));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, { status: 200, headers: SSE_HEADERS });
+}

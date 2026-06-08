@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+/* Dark, information-dense surface (constitution: 14px base, dark mode first-class).
+   Colours below clear WCAG 2.1 AA contrast on the near-black background:
+   slate-100 text on slate-950 ≈ 17:1; the green/red status colours are chosen at
+   400-level for ≥ 4.5:1, and correctness is never signalled by colour alone. */
+:root {
+  color-scheme: dark;
+}
+
+html {
+  font-size: 14px;
+}
+
+body {
+  background-color: #020617; /* slate-950 */
+  color: #f1f5f9; /* slate-100 */
+}
+
+/* Always-visible keyboard focus ring (Story 7). */
+:focus-visible {
+  outline: 2px solid #38bdf8; /* sky-400 */
+  outline-offset: 2px;
+}
