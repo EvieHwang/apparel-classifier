@@ -9,12 +9,17 @@
 // runViewReducer, and renders progressively: a results table that grows one row at a
 // time, a live headline accuracy, the authoritative near/far/blank breakdown on
 // completion, and a fail-fast error state with retry.
-import { useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   runViewReducer,
   initialRunViewState,
   formatTagAccuracy,
 } from "../src/view-reducer";
+import {
+  cumulativeAccuracy,
+  cumulativeTagAccuracy,
+} from "../src/cumulative";
+import type { CumulativeTotals } from "../src/cumulative";
 import type { RunStreamEvent } from "../src/run-stream";
 import type { RunEntry, Tag } from "../src/types";
 
@@ -51,10 +56,35 @@ export default function Page() {
   const [state, dispatch] = useReducer(runViewReducer, initialRunViewState);
   const runningRef = useRef(false);
 
+  // The cumulative panel reads shared, server-authoritative totals. It fails SOFT:
+  // a fetch fault keeps the last-known totals (or the loading state) and never takes
+  // down the Run button.
+  const [cumulative, setCumulative] = useState<CumulativeTotals | null>(null);
+  const [cumulativeUnavailable, setCumulativeUnavailable] = useState(false);
+
+  const loadCumulative = useCallback(async () => {
+    try {
+      const res = await fetch("/api/cumulative", { headers: { accept: "application/json" } });
+      if (!res.ok) throw new Error("cumulative unavailable");
+      setCumulative((await res.json()) as CumulativeTotals);
+      setCumulativeUnavailable(false);
+    } catch {
+      // Keep whatever we last had; just flag unavailability for the label.
+      setCumulativeUnavailable(true);
+    }
+  }, []);
+
+  // Initial read on mount (Story 1: the figure reflects every prior run, including
+  // other visitors', before this visitor runs anything).
+  useEffect(() => {
+    loadCumulative();
+  }, [loadCumulative]);
+
   async function startRun() {
     if (runningRef.current) return; // no concurrent run from this view
     runningRef.current = true;
     dispatch({ type: "start" });
+    let sawScore = false;
     try {
       const res = await fetch("/api/run", { headers: { accept: "text/event-stream" } });
       if (!res.body) throw new Error("No response stream from the server.");
@@ -67,7 +97,10 @@ export default function Page() {
         buffer += decoder.decode(value, { stream: true });
         const { events, rest } = parseFrames(buffer);
         buffer = rest;
-        for (const ev of events) dispatch(ev);
+        for (const ev of events) {
+          if (ev.type === "score") sawScore = true;
+          dispatch(ev);
+        }
       }
     } catch (err) {
       dispatch({
@@ -77,6 +110,10 @@ export default function Page() {
     } finally {
       runningRef.current = false;
     }
+    // Live tick (Story 4): a completed run re-reads the cumulative so the panel ticks
+    // to include it — no reload. A failed run (no score) leaves the panel untouched;
+    // the recorder committed nothing, so there is nothing new to read.
+    if (sawScore) loadCumulative();
   }
 
   const isRunning = state.status === "running";
@@ -86,12 +123,23 @@ export default function Page() {
       ? accuracyPct(state.score.accuracy)
       : accuracyPct(state.liveAccuracy);
 
-  // Screen-reader announcement for the aria-live region (Story 7).
+  // Cumulative headline accuracy: null (empty state) when no run has been recorded
+  // yet — rendered as a non-numeric marker, never NaN or a fake 0%.
+  const cumulativeOverall =
+    cumulative && cumulative.total > 0 ? cumulativeAccuracy(cumulative) : null;
+  const cumulativeIsEmpty = !cumulative || cumulative.total === 0;
+
+  // Screen-reader announcement for the aria-live region (Story 7 + Story 4: the
+  // cumulative tick is announced here too).
+  const cumulativeSpoken =
+    cumulative && cumulative.total > 0
+      ? ` Cumulative accuracy across ${cumulative.runs} run${cumulative.runs === 1 ? "" : "s"}: ${formatTagAccuracy(cumulativeOverall)}.`
+      : "";
   const liveMessage =
     state.status === "running"
       ? `Run in progress: ${state.rows.length} record${state.rows.length === 1 ? "" : "s"} classified so far, live accuracy ${accuracyPct(state.liveAccuracy)}.`
       : state.status === "done"
-        ? `Run complete: ${state.score?.total ?? 0} records, ${headlineAccuracy} accuracy.`
+        ? `Run complete: ${state.score?.total ?? 0} records, ${headlineAccuracy} accuracy.${cumulativeSpoken}`
         : state.status === "error"
           ? `Run failed: ${state.error ?? "unknown error"}. No accuracy is reported for a failed run.`
           : "Idle. Press Run to start a classification run.";
@@ -137,6 +185,13 @@ export default function Page() {
       <div role="status" aria-live="polite" className="sr-only">
         {liveMessage}
       </div>
+
+      <CumulativePanel
+        totals={cumulative}
+        isEmpty={cumulativeIsEmpty}
+        overall={cumulativeOverall}
+        unavailable={cumulativeUnavailable}
+      />
 
       {state.status === "error" && (
         <div
@@ -185,6 +240,81 @@ export default function Page() {
 
       <ResultsTable rows={state.rows} />
     </main>
+  );
+}
+
+// The cumulative-across-all-runs panel (Story 1, 4, 5). Distinct from the per-run
+// figure: it shows a stabilized overall accuracy, the run/record count it is computed
+// over, and the near/far/blank breakdown — all read from the server's authoritative
+// totals, never recomputed in the browser beyond formatting. Before any run is
+// recorded it shows a clear "no runs yet" empty state, never NaN.
+function CumulativePanel({
+  totals,
+  isEmpty,
+  overall,
+  unavailable,
+}: {
+  totals: CumulativeTotals | null;
+  isEmpty: boolean;
+  overall: number | null;
+  unavailable: boolean;
+}) {
+  return (
+    <section
+      aria-labelledby="cumulative-heading"
+      className="mb-6 rounded-md border border-slate-800 bg-slate-900/40 px-4 py-3"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="cumulative-heading" className="text-sm font-semibold text-slate-300">
+          Cumulative across all runs
+        </h2>
+        {totals && totals.total > 0 && (
+          <span className="text-slate-500">
+            {totals.runs} run{totals.runs === 1 ? "" : "s"} · {totals.total} record
+            {totals.total === 1 ? "" : "s"}
+          </span>
+        )}
+      </div>
+
+      {isEmpty ? (
+        <p className="mt-2 text-slate-400">
+          {unavailable
+            ? "The cumulative tally is temporarily unavailable."
+            : "No runs yet — the cumulative accuracy appears here once the first run completes."}
+        </p>
+      ) : (
+        <>
+          <p className="mt-2 text-slate-200">
+            <span className="text-slate-400">Overall:</span>{" "}
+            <span className="text-2xl font-semibold tabular-nums">
+              {formatTagAccuracy(overall)}
+            </span>
+            {unavailable && (
+              <span className="ml-2 text-slate-500">(last known — update unavailable)</span>
+            )}
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {(Object.keys(TAG_LABELS) as Tag[]).map((tag) => {
+              const cell = totals!.byTag[tag];
+              return (
+                <div
+                  key={tag}
+                  className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2"
+                >
+                  <div className="text-slate-400">{TAG_LABELS[tag]}</div>
+                  <div className="text-lg font-semibold tabular-nums">
+                    {formatTagAccuracy(cumulativeTagAccuracy(totals!, tag))}
+                  </div>
+                  <div className="text-slate-500">
+                    {cell.count} record{cell.count === 1 ? "" : "s"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
