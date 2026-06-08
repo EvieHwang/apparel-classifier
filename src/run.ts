@@ -26,6 +26,15 @@ export interface RunOptions {
   seed: number;
   /** Injected classifier seam (stub in tests, Anthropic adapter in the demo). */
   classify: Classify;
+  /**
+   * Additive observation hook (feature 3): called once per record, in run order,
+   * with that record's `RunEntry`, immediately after the entry is built and before
+   * the returned `RunResult` resolves. Purely observational — it alters nothing
+   * the cycle computes or returns, and on a fail-fast run it is called only for the
+   * records successfully classified before the failure. The dashboard uses it to
+   * stream entries without duplicating this loop's leak-prevention.
+   */
+  onEntry?: (entry: RunEntry) => void;
 }
 
 export async function runClassificationCycle({
@@ -33,6 +42,7 @@ export async function runClassificationCycle({
   n,
   seed,
   classify,
+  onEntry,
 }: RunOptions): Promise<RunResult> {
   // One PRNG threaded through sampling, tag assignment, and corruption so the
   // whole run is reproducible from `seed` alone.
@@ -63,7 +73,7 @@ export async function runClassificationCycle({
     // (no partial RunResult, no swallowed error).
     const prediction = await classify(input, subset.vocabulary);
 
-    entries.push({
+    const entry: RunEntry = {
       id: record.id,
       trueArticleType: record.articleType,
       corruptionTag: tag,
@@ -72,7 +82,12 @@ export async function runClassificationCycle({
       confidence: prediction.confidence,
       rationale: prediction.rationale,
       correct: prediction.articleType === record.articleType,
-    });
+    };
+    entries.push(entry);
+
+    // Additive per-entry observation (feature 3). Fires only after a successful
+    // classification, so a fail-fast run observes exactly the pre-failure records.
+    onEntry?.(entry);
   }
 
   return { ...score(entries), entries };
