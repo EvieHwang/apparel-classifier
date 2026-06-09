@@ -22,6 +22,9 @@ import {
 import type { CumulativeTotals } from "../src/cumulative";
 import type { RunStreamEvent } from "../src/run-stream";
 import type { RunEntry, Tag } from "../src/types";
+// Type-only import: single-classify.ts is SDK-free, so this never pulls the SDK or
+// the key into the browser bundle (key-isolation.test.ts allows this).
+import type { SingleClassifyResult } from "../src/single-classify";
 
 const TAG_LABELS: Record<Tag, string> = {
   "near-swap": "Near swap",
@@ -193,6 +196,8 @@ export default function Page() {
         unavailable={cumulativeUnavailable}
       />
 
+      <SingleRecordPanel />
+
       {state.status === "error" && (
         <div
           role="alert"
@@ -314,6 +319,165 @@ function CumulativePanel({
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+// The live single-record panel (feature 5). A visitor types one product name, the
+// panel POSTs it to /api/classify, and renders the same classifier's gated result
+// inline: a classification (type + confidence + rationale + the classified name), a
+// decline (off-distribution), or a visible error with retry. There is no ✓/✗ and no
+// accuracy — a user-supplied name has no ground truth (Story 2). It renders every
+// model-derived string as plain TEXT (never raw HTML), so a hostile product name
+// stays inert (Story 6). Client-only: it never imports the SDK or the key.
+type PanelState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "result"; classifiedName: string; result: SingleClassifyResult }
+  | { status: "error"; message: string };
+
+function SingleRecordPanel() {
+  const [name, setName] = useState("");
+  const [state, setState] = useState<PanelState>({ status: "idle" });
+  const submittingRef = useRef(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (submittingRef.current) return; // no concurrent classify from this view
+    const trimmed = name.trim();
+    if (trimmed.length === 0) {
+      // Cheap client-side guard so an empty box never bills a call; the route
+      // enforces the same (and the length bound) authoritatively.
+      setState({
+        status: "result",
+        classifiedName: "",
+        result: { status: "invalid", reason: "Enter a product name to classify." },
+      });
+      return;
+    }
+
+    submittingRef.current = true;
+    setState({ status: "loading" });
+    try {
+      const res = await fetch("/api/classify", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ productName: trimmed }),
+      });
+      const data = (await res.json()) as SingleClassifyResult | { error: string };
+      if ("error" in data) throw new Error(data.error);
+      setState({ status: "result", classifiedName: trimmed, result: data });
+    } catch (err) {
+      setState({
+        status: "error",
+        message:
+          err instanceof Error ? err.message : "The classification failed unexpectedly.",
+      });
+    } finally {
+      submittingRef.current = false;
+    }
+  }
+
+  const isLoading = state.status === "loading";
+
+  // One screen-reader announcement for the async outcome (Story 7).
+  const spoken =
+    state.status === "loading"
+      ? "Classifying…"
+      : state.status === "error"
+        ? `Classification failed: ${state.message}`
+        : state.status === "result"
+          ? state.result.status === "classified"
+            ? `Classified as ${state.result.prediction.articleType}, ${state.result.prediction.confidence} confidence.`
+            : state.result.status === "declined"
+              ? `Declined: ${state.result.reason}`
+              : `Invalid input: ${state.result.reason}`
+          : "";
+
+  return (
+    <section
+      aria-labelledby="single-heading"
+      className="mb-6 rounded-md border border-slate-800 bg-slate-900/40 px-4 py-3"
+    >
+      <h2 id="single-heading" className="text-sm font-semibold text-slate-300">
+        Try it on your own product name
+      </h2>
+      <p className="mt-1 text-slate-400">
+        Type any apparel product name and the same classifier places it — from the
+        name alone, constrained to the demo&apos;s article-type vocabulary.
+      </p>
+
+      <form onSubmit={submit} className="mt-3 flex flex-wrap items-end gap-3">
+        <div className="flex-1 min-w-[16rem]">
+          <label htmlFor="single-name" className="block text-slate-300">
+            Product name
+          </label>
+          <input
+            id="single-name"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Nike running shorts"
+            maxLength={200}
+            autoComplete="off"
+            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={isLoading}
+          aria-busy={isLoading}
+          className="rounded-md bg-sky-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isLoading ? "Classifying…" : "Classify"}
+        </button>
+      </form>
+
+      {/* Async outcome announced for screen readers (Story 7). */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {spoken}
+      </div>
+
+      <div className="mt-3">
+        {state.status === "error" && (
+          <div
+            role="alert"
+            className="rounded-md border border-red-400/50 bg-red-950/40 px-3 py-2 text-red-200"
+          >
+            <p className="font-medium">Classification failed.</p>
+            <p className="mt-1 text-red-300">{state.message}</p>
+            <p className="mt-1 text-red-300">Try again.</p>
+          </div>
+        )}
+
+        {state.status === "result" && state.result.status === "classified" && (
+          <div className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2">
+            <p className="text-slate-400">
+              Classified <span className="text-slate-200">{state.classifiedName}</span> as
+            </p>
+            <p className="mt-1 text-lg font-semibold text-slate-100">
+              {state.result.prediction.articleType}{" "}
+              <span className="text-sm font-normal capitalize text-slate-400">
+                · {state.result.prediction.confidence} confidence
+              </span>
+            </p>
+            <p className="mt-1 text-slate-300">{state.result.prediction.rationale}</p>
+          </div>
+        )}
+
+        {state.status === "result" && state.result.status === "declined" && (
+          <div className="rounded-md border border-amber-400/40 bg-amber-950/30 px-3 py-2 text-amber-200">
+            <p className="font-medium">Not classified</p>
+            <p className="mt-1 text-amber-300/90">{state.result.reason}</p>
+          </div>
+        )}
+
+        {state.status === "result" && state.result.status === "invalid" && (
+          <div className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-300">
+            {state.result.reason}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
