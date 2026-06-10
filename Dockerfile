@@ -5,7 +5,11 @@
 FROM node:22-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+# Pin pnpm to the version verified against this lockfile. corepack's unpinned "latest"
+# pnpm ignores package.json's `pnpm.onlyBuiltDependencies` and treats unbuilt dependency
+# build scripts (esbuild/sharp) as a FATAL error in non-interactive installs; 10.33.0
+# honors the field and builds them. Pinning keeps the image build identical to CI/local.
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 # --- deps: install with the committed lockfile ---
 FROM base AS deps
