@@ -21,6 +21,9 @@ import { runEventStream } from "../../../src/run-stream";
 import { recordRunStream } from "../../../src/record-run";
 import { getCumulativeStore } from "../../../src/cumulative-sqlite";
 import { encodeSseEvent } from "../../../src/sse-encoder";
+import { getRateLimiter } from "../../../src/rate-limit";
+import { clientKey } from "../../../src/client-ip";
+import { rateLimitResponse } from "../../../src/rate-limit-response";
 import type { Classify } from "../../../src/types";
 
 // SSE needs an unbuffered, dynamic response — never statically cached.
@@ -34,7 +37,14 @@ const SSE_HEADERS: HeadersInit = {
 
 const SUBSET_PATH = join(process.cwd(), "docs", "apparel-subset.csv");
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  // Abuse gate (feature 6): consult the limiter BEFORE reading the key, constructing the
+  // Anthropic client, or opening any SSE stream. A refusal returns a plain 429/503 with
+  // Retry-After — never a text/event-stream that was already started, and never a model
+  // call. The global ceiling is checked before the per-IP cap inside admit().
+  const decision = getRateLimiter().admit(clientKey(request.headers));
+  if (!decision.ok) return rateLimitResponse(decision);
+
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     // Fail closed: clear, non-2xx, no key value anywhere in the payload.

@@ -135,15 +135,24 @@ describe("rate limiter — global circuit-breaker (Story 3)", () => {
     // window resets the ceiling WITHOUT resetting per-IP counts, so we can observe
     // whether the earlier global refusal silently consumed the refused key's per-IP
     // budget (the "permanently poison the counter on retry" failure mode).
+    //
+    // The global ceiling (3) sits ABOVE the per-IP cap (2) so that, in the post-reset
+    // window, the per-IP cap — not the global ceiling — is what binds z's third call.
+    // That is the only configuration in which observing "z gets exactly 2 admits" can
+    // prove its per-IP budget is intact: a global ceiling at or below the per-IP cap
+    // would refuse z on global grounds first and tell us nothing about its per-IP count.
     const clock = fakeClock();
     const rl = createRateLimiter({
       perIpLimit: 2,
       perIpWindowMs: 1_000_000, // effectively does not reset during this test
-      globalLimit: 1,
+      globalLimit: 3,
       globalWindowMs: 1000,
       now: clock.now,
     });
-    expect(rl.admit("a").ok).toBe(true); // global now full (limit 1)
+    // Fill the global ceiling with three distinct keys, each within its own per-IP budget.
+    expect(rl.admit("a").ok).toBe(true);
+    expect(rl.admit("b").ok).toBe(true);
+    expect(rl.admit("c").ok).toBe(true); // global now full (limit 3)
     const refused = rl.admit("z"); // fresh key, globally refused
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.scope).toBe("global");

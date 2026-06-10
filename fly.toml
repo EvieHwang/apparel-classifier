@@ -1,0 +1,40 @@
+# Fly.io config for the public apparel-classifier demo (feature 6).
+#
+# Single machine by design: the in-process rate-limiter counters and feature 4's SQLite
+# cumulative store are correct only on one machine (the mounted volume pins the app to
+# it — see the feature 6 declaration's acknowledged multi-machine boundary). The
+# cumulative DB lives on the mounted volume so the tally survives redeploys. The Anthropic
+# API key is set out-of-band via `fly secrets`, never declared here.
+app = "apparel-classifier"
+primary_region = "iad"
+
+[build]
+
+[env]
+  # Non-secret runtime path: points feature 4's cumulative SQLite DB at the mounted
+  # volume below, so the cumulative number survives a redeploy (Story 6).
+  CUMULATIVE_DB_PATH = "/data/cumulative.sqlite"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Pin to a single always-on machine: shared with the volume and the in-process counters.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Declared HTTP health check against the cheap, LLM-free /api/health endpoint. This is
+  # the primary deploy gate: flyctl's rolling release fails (non-zero exit) if the new
+  # machine never passes it, so a deploy that issues but doesn't serve fails the job.
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "get"
+    path = "/api/health"
+
+# Mounted, writable volume holding the cumulative SQLite DB (CUMULATIVE_DB_PATH points
+# under this destination), so feature 4's number is not wiped on each release.
+[[mounts]]
+  source = "cumulative_data"
+  destination = "/data"
