@@ -1,0 +1,38 @@
+name: CI
+
+# The constitution's Quality gate: all tests pass, and CI runs the same build the deploy
+# runs. Vitest does not type-check, so CI also runs `pnpm build` (next build → tsc) as the
+# type/compile gate. Runs on every PR and on push to main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Test + build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          # Node 22+ is required by feature 4's cumulative store (node:sqlite).
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test (Vitest)
+        run: pnpm test
+
+      - name: Build (production type/compile gate)
+        run: pnpm build
