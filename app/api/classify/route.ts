@@ -17,6 +17,9 @@ import { createAnthropicClassifier } from "../../../src/classify";
 import { createRunStructured } from "../../../src/anthropic";
 import { loadSubset } from "../../../src/dataset";
 import { classifyOne } from "../../../src/single-classify";
+import { getRateLimiter } from "../../../src/rate-limit";
+import { clientKey } from "../../../src/client-ip";
+import { rateLimitResponse } from "../../../src/rate-limit-response";
 import type { Classify } from "../../../src/types";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +27,13 @@ export const dynamic = "force-dynamic";
 const SUBSET_PATH = join(process.cwd(), "docs", "apparel-subset.csv");
 
 export async function POST(request: Request): Promise<Response> {
+  // Abuse gate (feature 6): consult the limiter BEFORE reading the key, parsing the body,
+  // or constructing the Anthropic client. A refusal returns a plain 429/503 with
+  // Retry-After and makes no model call. The global ceiling is checked before the per-IP
+  // cap inside admit(), so the shared budget covers this endpoint and GET /api/run alike.
+  const decision = getRateLimiter().admit(clientKey(request.headers));
+  if (!decision.ok) return rateLimitResponse(decision);
+
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     // Fail closed: clear, non-2xx, no key value anywhere in the payload.

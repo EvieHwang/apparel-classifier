@@ -1,0 +1,48 @@
+name: Deploy to Fly.io
+
+# Deploys on every push to main (constitution: deploys run through GitHub Actions on push
+# to main; prefer first-class `flyctl deploy` over SSH). The release is health-gated: the
+# HTTP health check declared in fly.toml makes flyctl's rolling deploy fail (non-zero exit
+# → failed job) if the new machine never serves /api/health — so "deployed" means
+# "serving." The post-deploy probe below is belt-and-suspenders on top of that primary
+# gate, not a substitute for it.
+on:
+  push:
+    branches: [main]
+
+# Serialize releases so two pushes don't deploy on top of each other.
+concurrency: deploy-fly
+
+jobs:
+  deploy:
+    name: Deploy app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy (health-gated by fly.toml)
+        run: flyctl deploy --remote-only
+        env:
+          # Injected from the repo's GitHub Actions secrets (mirrored from 1Password).
+          # The Anthropic key is NOT set here — it is managed separately via `fly secrets`.
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Post-deploy health probe (bounded retry)
+        run: |
+          set -euo pipefail
+          url="https://apparel-classifier.fly.dev/api/health"
+          for i in $(seq 1 12); do
+            code=$(curl -fsS -o /dev/null -w "%{http_code}" "$url" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Health check passed (HTTP $code) on attempt $i."
+              exit 0
+            fi
+            echo "Attempt $i: /api/health returned $code; retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check never returned 200 within the retry window; failing the job." >&2
+          exit 1
