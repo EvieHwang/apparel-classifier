@@ -58,6 +58,13 @@ a decision, not made silently.
   files from their own location via `fileURLToPath(import.meta.url)` (never an
   absolute sandbox path). Non-`.test.ts` files in a `tests/` folder (e.g.
   `csv.ts`) are shared helpers, not suites.
+  **React component tests** (added feature 7): `vitest.config.ts` sets
+  `esbuild: { jsx: "automatic" }` so component files that use JSX without
+  importing React (e.g. `app/page.tsx`) render in the node environment via
+  `react-dom/server`'s `renderToStaticMarkup`. No jsdom/testing-library
+  dependency. Test files stay `*.test.ts` and build elements with
+  `React.createElement` (no JSX in the test file itself), so the include glob is
+  unchanged; assert on the entity-decoded static markup, not on source text.
 
 ## Out of scope
 [List what this codebase explicitly does not do. Populated per app.]
