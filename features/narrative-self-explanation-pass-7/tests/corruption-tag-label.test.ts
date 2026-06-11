@@ -13,7 +13,11 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ResultsTable } from "../../../app/page.tsx";
+// Seam refined in /build: Next.js rejects non-reserved named exports from a route page,
+// so ResultsTable lives in app/results-table.tsx (re-used by app/page.tsx). The asserted
+// behaviour — each row's corruption tag shown in human terms — is unchanged. See
+// build-deviations.md.
+import { ResultsTable } from "../../../app/results-table.tsx";
 import type { RunEntry } from "../../../src/types.ts";
 
 const rows: RunEntry[] = [
