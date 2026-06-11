@@ -25,12 +25,10 @@ import type { RunEntry, Tag } from "../src/types";
 // Type-only import: single-classify.ts is SDK-free, so this never pulls the SDK or
 // the key into the browser bundle (key-isolation.test.ts allows this).
 import type { SingleClassifyResult } from "../src/single-classify";
-
-const TAG_LABELS: Record<Tag, string> = {
-  "near-swap": "Near swap",
-  "far-swap": "Far swap",
-  blank: "Blank",
-};
+// The results table and its corruption-tag label map live in their own module: Next.js
+// rejects non-reserved named exports from a route page, and feature 7's @scaffolding test
+// renders ResultsTable directly (see build-deviations.md).
+import { ResultsTable, TAG_LABELS } from "./results-table";
 
 // Parse the SSE text buffer into whole events, returning the parsed events and the
 // unparsed remainder (a frame split across chunks).
@@ -53,6 +51,120 @@ function parseFrames(buffer: string): { events: RunStreamEvent[]; rest: string }
     else if (type === "error") events.push({ type: "error", message: data.message });
   }
   return { events, rest };
+}
+
+// ── Narrative layer (feature 7) ───────────────────────────────────────────────
+// Static framing copy that makes a forwarded link self-explaining to a cold reader:
+// a Hero, the three-beat Corrupt → Classify → Score model, the
+// normalization-vs-classification teaching point, and the name-carries-the-signal
+// honesty note. All four are stateless presentational components — no state, no
+// fetching, no effects — so they render fully in the page's initial idle markup.
+
+// What is this / why care, before any interactive control.
+function Hero() {
+  return (
+    <header className="mb-8">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-sky-300">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-500" />
+        Live demo · classify your own product below
+      </div>
+      <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-50 sm:text-4xl">
+        Apparel Classifier
+      </h1>
+      <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-300">
+        Vendor product data arrives mislabeled — a pair of shorts filed as a bra, a
+        category left blank. Those errors quietly compound downstream, distorting
+        planning and inventory. This demo takes real, correctly-labeled apparel records,
+        deliberately breaks the category field, and asks an LLM to put it back — then
+        scores every guess against the original label.
+      </p>
+    </header>
+  );
+}
+
+// The three-beat mental model — a semantic ordered list so a cold reader can parse the
+// results table a moment later (Corrupt → Classify → Score).
+function HowItWorks() {
+  const steps = [
+    {
+      n: "1",
+      title: "Corrupt",
+      body: "Take a record with a known, correct type and damage it — swap it for a close sibling, a far-off type, or wipe it blank.",
+    },
+    {
+      n: "2",
+      title: "Classify",
+      body: "The model sees the product’s other fields — mainly its name — and predicts the original type, with a confidence and a one-line reason.",
+    },
+    {
+      n: "3",
+      title: "Score",
+      body: "Each prediction is checked against the real label. Nothing is graded on a curve; a miss is a miss.",
+    },
+  ];
+  return (
+    <section aria-label="How this works" className="mb-8">
+      <ol className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {steps.map((s, i) => (
+          <li
+            key={s.n}
+            className="relative rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3.5"
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-500 text-xs font-semibold text-slate-950">
+                {s.n}
+              </span>
+              <span className="text-sm font-semibold text-slate-100">{s.title}</span>
+              {i < steps.length - 1 && (
+                <span className="ml-auto hidden text-slate-600 sm:inline" aria-hidden="true">
+                  →
+                </span>
+              )}
+            </div>
+            <p className="mt-2 text-[13px] leading-relaxed text-slate-400">{s.body}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+// REQUIRED payload: this recovers WHICH CATEGORY a product is; it does NOT normalize
+// vocabulary/formatting — that is a separate problem, deliberately out of v1. Rendered
+// as a quiet footnote-weight line under the steps (the handoff's recommended treatment).
+function TeachingPoint() {
+  return (
+    <p className="mb-6 text-[13px] leading-relaxed text-slate-500">
+      <span className="font-medium text-slate-400">What this is — and isn’t.</span>{" "}
+      This recovers <span className="font-medium text-slate-200">which category</span> a
+      product belongs to — Tshirts, Jeans, Briefs. It does{" "}
+      <span className="font-medium text-slate-200">not</span> normalize vocabulary or
+      formatting: “Tshirt” vs “T-Shirt” vs “tee” is a separate problem, deliberately left
+      out of v1. Classification first; cleanup is its own job.
+    </p>
+  );
+}
+
+// REQUIRED payload: the model leans on the product NAME, which usually contains the
+// answer, so this measures recovery of a hinted category — verifiable against the lagging
+// Blank rows, which are the closest thing to a cold read. Rendered as a quiet <aside> card.
+function HonestyNote() {
+  return (
+    <aside className="mb-6 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-wider text-sky-300">
+        One honest caveat
+      </p>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+        The model leans on the product <span className="font-medium text-slate-200">name</span>,
+        and real apparel names usually contain the answer — “Nike Men Navy Running Shorts”
+        all but says <span className="font-medium text-slate-200">Shorts</span>. So this
+        measures how reliably the model recovers a category the name already hints at, even
+        when the category field is wrong or missing — not classification from scratch. The{" "}
+        <span className="font-medium text-slate-200">Blank</span> rows below are the closest
+        thing to a cold read, and you can watch their accuracy lag the rest.
+      </p>
+    </aside>
+  );
 }
 
 export default function Page() {
@@ -149,15 +261,10 @@ export default function Page() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">Apparel Classifier</h1>
-        <p className="mt-1 max-w-2xl text-slate-300">
-          Real apparel records have their <code>articleType</code> deliberately
-          corrupted, then an LLM recovers it. Each row shows the true label, the
-          corrupted value the model saw, and what it predicted — scored strictly
-          against ground truth.
-        </p>
-      </header>
+      <Hero />
+      <HowItWorks />
+      <TeachingPoint />
+      <HonestyNote />
 
       <div className="mb-6 flex flex-wrap items-center gap-4">
         <button
@@ -479,60 +586,5 @@ function SingleRecordPanel() {
         )}
       </div>
     </section>
-  );
-}
-
-function ResultsTable({ rows }: { rows: RunEntry[] }) {
-  return (
-    <table className="w-full border-collapse text-left">
-      <caption className="sr-only">
-        Per-record classification results: true article type, the corrupted value the
-        model was shown, the prediction, whether it was correct, the model&apos;s
-        confidence, and its rationale.
-      </caption>
-      <thead>
-        <tr className="border-b border-slate-700 text-slate-400">
-          <th scope="col" className="py-2 pr-3 font-medium">Original</th>
-          <th scope="col" className="py-2 pr-3 font-medium">Corrupted</th>
-          <th scope="col" className="py-2 pr-3 font-medium">Predicted</th>
-          <th scope="col" className="py-2 pr-3 font-medium">Result</th>
-          <th scope="col" className="py-2 pr-3 font-medium">Confidence</th>
-          <th scope="col" className="py-2 font-medium">Rationale</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.length === 0 ? (
-          <tr>
-            <td colSpan={6} className="py-6 text-slate-500">
-              No results yet. Press Run to classify a fresh batch of records.
-            </td>
-          </tr>
-        ) : (
-          rows.map((row) => (
-            <tr key={row.id} className="border-b border-slate-800 align-top">
-              <td className="py-2 pr-3">{row.trueArticleType}</td>
-              <td className="py-2 pr-3">
-                {row.corruptionTag === "blank" || row.corruptedValue === "" ? (
-                  <span className="italic text-slate-500">(blank)</span>
-                ) : (
-                  row.corruptedValue
-                )}
-              </td>
-              <td className="py-2 pr-3">{row.predictedArticleType}</td>
-              <td className="py-2 pr-3">
-                {/* Not colour alone: a glyph + word back the colour (Story 7). */}
-                {row.correct ? (
-                  <span className="text-green-400">✓ correct</span>
-                ) : (
-                  <span className="text-red-400">✗ wrong</span>
-                )}
-              </td>
-              <td className="py-2 pr-3 capitalize">{row.confidence}</td>
-              <td className="py-2 text-slate-300">{row.rationale}</td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </table>
   );
 }
