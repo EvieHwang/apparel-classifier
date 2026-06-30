@@ -20,6 +20,7 @@ import { classifyOne } from "../../../src/single-classify";
 import { getRateLimiter } from "../../../src/rate-limit";
 import { clientKey } from "../../../src/client-ip";
 import { rateLimitResponse } from "../../../src/rate-limit-response";
+import { isSitePaused, SITE_PAUSED_MESSAGE } from "../../../src/site-paused";
 import type { Classify } from "../../../src/types";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +28,13 @@ export const dynamic = "force-dynamic";
 const SUBSET_PATH = join(process.cwd(), "docs", "apparel-subset.csv");
 
 export async function POST(request: Request): Promise<Response> {
+  // Kill switch: if the demo is paused, fail closed BEFORE the limiter, the key, the body
+  // parse, or any model call — a friendly 503 the client surfaces as an error, never an
+  // API cost. The client throws on the `error` field, so the message reaches the visitor.
+  if (isSitePaused()) {
+    return Response.json({ error: SITE_PAUSED_MESSAGE }, { status: 503 });
+  }
+
   // Abuse gate (feature 6): consult the limiter BEFORE reading the key, parsing the body,
   // or constructing the Anthropic client. A refusal returns a plain 429/503 with
   // Retry-After and makes no model call. The global ceiling is checked before the per-IP
