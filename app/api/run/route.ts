@@ -24,6 +24,7 @@ import { encodeSseEvent } from "../../../src/sse-encoder";
 import { getRateLimiter } from "../../../src/rate-limit";
 import { clientKey } from "../../../src/client-ip";
 import { rateLimitResponse } from "../../../src/rate-limit-response";
+import { isSitePaused, SITE_PAUSED_MESSAGE } from "../../../src/site-paused";
 import type { Classify } from "../../../src/types";
 
 // SSE needs an unbuffered, dynamic response — never statically cached.
@@ -38,6 +39,16 @@ const SSE_HEADERS: HeadersInit = {
 const SUBSET_PATH = join(process.cwd(), "docs", "apparel-subset.csv");
 
 export async function GET(request: Request): Promise<Response> {
+  // Kill switch: if the demo is paused, fail closed BEFORE the limiter, the key, or any
+  // model call — a friendly terminal SSE error frame (503) the client renders as the
+  // run's error state, never a started run and never an API cost.
+  if (isSitePaused()) {
+    return new Response(
+      encodeSseEvent({ type: "error", message: SITE_PAUSED_MESSAGE }),
+      { status: 503, headers: SSE_HEADERS },
+    );
+  }
+
   // Abuse gate (feature 6): consult the limiter BEFORE reading the key, constructing the
   // Anthropic client, or opening any SSE stream. A refusal returns a plain 429/503 with
   // Retry-After — never a text/event-stream that was already started, and never a model
